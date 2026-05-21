@@ -258,7 +258,13 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
 
         {image && (
           <View style={styles.imageContainer}>
-            <Image source={{ uri: image.uri }} style={styles.image} />
+            <Image
+              source={{ uri: image.uri }}
+              style={[
+                styles.image,
+                { aspectRatio: (image.width / image.height) || 1 },
+              ]}
+            />
             <Text style={styles.imageText}>Receipt loaded! ✅</Text>
           </View>
         )}
@@ -454,8 +460,6 @@ const styles = StyleSheet.create({
   },
   image: {
     width: '100%',
-    height: 300,
-    resizeMode: 'contain',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#ddd',
