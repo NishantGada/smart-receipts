@@ -20,7 +20,7 @@ export default function App() {
     try {
       const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -30,23 +30,24 @@ export default function App() {
             parts: [
               {
                 text: `You are an expert receipt parser. Extract ALL information from this receipt.
-  
-  Requirements:
-  1. List EVERY item with its exact price
-  2. Extract subtotal, tax, tip (if any), and total
-  3. Validate: subtotal + tax + tip should equal total
-  4. If validation fails, flag it
-  
-  Return ONLY valid JSON (no markdown, no code blocks, no explanation):
-  {
-    "items": [{"name": "string", "price": number}],
-    "subtotal": number,
-    "tax": number,
-    "tip": number,
-    "total": number,
-    "validation": {"matches": boolean, "discrepancy": number},
-    "currency": "USD"
-  }`
+
+CRITICAL RULES:
+1. Look for QUANTITIES - if you see "5x Burger" it means 5 burgers, NOT 1
+2. Extract the UNIT PRICE if shown, or calculate it from total/quantity
+3. List each item with its quantity and individual price
+4. Extract subtotal, tax, tip (if any), and total
+5. Validate: sum of all items should equal the receipt total
+
+Return ONLY valid JSON (no markdown, no code blocks, no explanation):
+{
+  "items": [{"name": "string", "quantity": number, "unitPrice": number, "totalPrice": number}],
+  "subtotal": number,
+  "tax": number,
+  "tip": number,
+  "total": number,
+  "validation": {"matches": boolean, "discrepancy": number},
+  "currency": "USD"
+}`
               },
               {
                 inline_data: {
@@ -96,29 +97,42 @@ export default function App() {
     try {
       const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 
-      // Create a context for the LLM
-      const itemsList = extractedData.items.map(item => `${item.name}: $${item.price}`).join('\n');
+      const itemsList = extractedData.items.map(item =>
+        `${item.name}|qty:${item.quantity}|unit:${item.unitPrice.toFixed(2)}|total:${item.totalPrice.toFixed(2)}`
+      ).join('\n');
 
-      const prompt = `You are a bill splitting calculator. Parse the instructions and calculate amounts.
+      const prompt = `Parse these split instructions and calculate exact amounts per person.
   
-  RECEIPT ITEMS:
+  RECEIPT ITEMS (format: name|qty:X|unit:$X|total:$X):
   ${itemsList}
   
-  SPLIT INSTRUCTIONS:
-  "${splitInstructions}"
+  TOTAL RECEIPT: $${extractedData.total.toFixed(2)}
   
-  RULES:
-  - Match item names flexibly (ignore exact case/spacing)
-  - If an item isn't mentioned, note it as "unassigned"
-  - Calculate exact dollar amounts per person
-  - Be concise
+  INSTRUCTIONS:
+  ${splitInstructions}
   
-  Return ONLY this JSON (no explanation, no markdown):
+  STEPS TO FOLLOW:
+  1. Extract all person names mentioned
+  2. For each person, list their items:
+     - Direct assignments: "X had Y" means X gets 1 Y
+     - Quantities: "2 pav bhaji nirmit" means nirmit gets 2 pav bhaji
+     - Equal splits: "divided between A, B, C" means divide total price by 3
+     - Exclusions: "except X" means split among others only
+  3. Calculate amounts using ONLY the unit/total prices provided above
+  4. Each person appears ONCE in the output
+  5. Sum all amounts - must equal receipt total
+  
+  EXAMPLE:
+  If "burger divided between Amy and Bob":
+  - Amy gets: 0.5 * burger_total
+  - Bob gets: 0.5 * burger_total
+  
+  Return JSON only (no markdown):
   {
     "splits": [
-      {"person": "name", "items": ["item1"], "amount": 0.00}
+      {"person": "Name", "items": ["1x Burger ($15.59)"], "amount": 15.59}
     ],
-    "total": 0.00,
+    "total": ${extractedData.total.toFixed(2)},
     "validation": {"allItemsAssigned": true, "message": ""}
   }`;
 
@@ -132,10 +146,8 @@ export default function App() {
             parts: [{ text: prompt }]
           }],
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 2000,
-            responseLogprobs: false,
-            stopSequences: []
+            temperature: 0.05,
+            maxOutputTokens: 2500,
           }
         }),
       });
@@ -147,27 +159,34 @@ export default function App() {
         const content = data.candidates[0].content.parts[0].text;
         console.log('Raw split content:', content);
 
-        // More aggressive cleaning
         let cleanContent = content
           .replace(/```json\n?/g, '')
           .replace(/```\n?/g, '')
-          .replace(/^[^{]*/g, '')  // Remove everything before first {
-          .replace(/[^}]*$/g, '')  // Remove everything after last }
+          .replace(/^[^{]*/g, '')
+          .replace(/[^}]*$/g, '')
           .trim();
 
         console.log('Cleaned content:', cleanContent);
         const parsed = JSON.parse(cleanContent);
 
+        // Validation check
+        const calculatedTotal = parsed.splits.reduce((sum, split) => sum + split.amount, 0);
+        const receiptTotal = extractedData.total;
+
+        if (Math.abs(calculatedTotal - receiptTotal) > 0.05) {
+          console.warn(`Warning: Split total ($${calculatedTotal.toFixed(2)}) doesn't match receipt ($${receiptTotal.toFixed(2)})`);
+        }
+
         setSplitResults(parsed);
         console.log('Split results:', parsed);
       }
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Error processing split:', error);
 
       if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
-        alert('Rate limit reached! Please wait a minute and try again. Free tier resets daily.');
+        alert('Rate limit reached! Please wait a minute and try again.');
       } else {
-        alert('Error processing. Check console for details.');
+        alert('Error splitting bill. Try simpler instructions or check console.');
       }
     } finally {
       setLoading(false);
@@ -186,9 +205,9 @@ export default function App() {
     // Launch image picker
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 1,
-      base64: true, // We need base64 for OpenAI
+      allowsEditing: false,  // ← Allow full image!
+      quality: 0.8,
+      base64: true,
     });
 
     if (!result.canceled) {
@@ -264,8 +283,10 @@ export default function App() {
             <View style={styles.itemsList}>
               {extractedData.items.map((item, index) => (
                 <View key={index} style={styles.itemRow}>
-                  <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+                  <Text style={styles.itemName}>
+                    {item.quantity > 1 ? `${item.quantity}x ` : ''}{item.name}
+                  </Text>
+                  <Text style={styles.itemPrice}>${item.totalPrice.toFixed(2)}</Text>
                 </View>
               ))}
             </View>
