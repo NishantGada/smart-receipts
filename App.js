@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -82,9 +82,9 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
       console.error('Error:', error);
 
       if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
-        alert('Rate limit reached! Please wait a minute and try again. Free tier resets daily.');
+        Alert.alert('Rate limit reached', 'Please wait a minute and try again. Free tier resets daily.');
       } else {
-        alert('Error processing. Check console for details.');
+        Alert.alert('Processing failed', 'Could not process the receipt. Check the console for details.');
       }
     } finally {
       setLoading(false);
@@ -184,9 +184,9 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
       console.error('Error processing split:', error);
 
       if (error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED')) {
-        alert('Rate limit reached! Please wait a minute and try again.');
+        Alert.alert('Rate limit reached', 'Please wait a minute and try again.');
       } else {
-        alert('Error splitting bill. Try simpler instructions or check console.');
+        Alert.alert('Split failed', 'Try simpler instructions or check the console for details.');
       }
     } finally {
       setLoading(false);
@@ -198,7 +198,7 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (permissionResult.granted === false) {
-      alert('Permission to access gallery is required!');
+      Alert.alert('Permission needed', 'Permission to access the gallery is required to upload a receipt.');
       return;
     }
 
