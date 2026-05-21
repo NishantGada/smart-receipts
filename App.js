@@ -220,6 +220,13 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
     Keyboard.dismiss();
   };
 
+  const resetAll = () => {
+    setImage(null);
+    setExtractedData(null);
+    setSplitInstructions('');
+    setSplitResults(null);
+  };
+
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       'keyboardDidShow',
@@ -399,13 +406,24 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
                 setSplitResults(null);
                 setSplitInstructions('');
               }}
+              activeOpacity={0.7}
             >
               <Text style={styles.buttonText}>Split Again</Text>
             </TouchableOpacity>
           </View>
         )}
 
-          <StatusBar style="auto" />
+        {(image || extractedData || splitResults) && !loading && (
+          <TouchableOpacity
+            style={[styles.button, styles.startOverButton]}
+            onPress={resetAll}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.buttonText}>Start Over</Text>
+          </TouchableOpacity>
+        )}
+
+        <StatusBar style="auto" />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -444,6 +462,10 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.4,
+  },
+  startOverButton: {
+    marginTop: 20,
+    backgroundColor: '#FF3B30',
   },
   buttonText: {
     color: 'white',
