@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useEffect, useState } from 'react';
-import { Image, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -237,17 +237,17 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
   }, []);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ flex: 1 }}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-    >
-      <ScrollView
-        ref={scrollViewRef}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-        onScrollBeginDrag={dismissKeyboard}
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
       >
+        <ScrollView
+          ref={scrollViewRef}
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={dismissKeyboard}
+        >
 
         <View style={!image && !extractedData ? styles.centerContent : null}>
           <Text style={styles.title}>Smart Receipt Splitter</Text>
@@ -389,19 +389,24 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
           </View>
         )}
 
-        <StatusBar style="auto" />
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <StatusBar style="auto" />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
   container: {
     flexGrow: 1,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 40,
+    paddingVertical: 20,
     paddingHorizontal: 20,
   },
   centerContent: {
