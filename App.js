@@ -204,8 +204,8 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
 
     // Launch image picker
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,  // ← Allow full image!
+      mediaTypes: ['images'],
+      allowsEditing: false,
       quality: 0.8,
       base64: true,
     });
