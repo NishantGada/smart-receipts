@@ -258,7 +258,14 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
 
         <View style={!image && !extractedData ? styles.centerContent : null}>
           <Text style={styles.title}>Smart Receipt Splitter</Text>
-          <TouchableOpacity style={styles.button} onPress={pickImage}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={pickImage}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Upload a receipt image"
+            hitSlop={8}
+          >
             <Text style={styles.buttonText}>Upload Receipt</Text>
           </TouchableOpacity>
         </View>
@@ -280,6 +287,10 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
           <TouchableOpacity
             style={[styles.button, { marginTop: 20, backgroundColor: '#34C759' }]}
             onPress={processReceipt}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Process the uploaded receipt"
+            hitSlop={8}
           >
             <Text style={styles.buttonText}>Process Receipt</Text>
           </TouchableOpacity>
@@ -373,6 +384,10 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
               onPress={processSplit}
               disabled={!splitInstructions.trim()}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Split the bill using the instructions above"
+              accessibilityState={{ disabled: !splitInstructions.trim() }}
+              hitSlop={8}
             >
               <Text style={styles.buttonText}>Split Bill</Text>
             </TouchableOpacity>
@@ -407,6 +422,9 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
                 setSplitInstructions('');
               }}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Edit split instructions and recalculate"
+              hitSlop={8}
             >
               <Text style={styles.buttonText}>Split Again</Text>
             </TouchableOpacity>
@@ -418,6 +436,9 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
             style={[styles.button, styles.startOverButton]}
             onPress={resetAll}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Discard everything and start over with a new receipt"
+            hitSlop={8}
           >
             <Text style={styles.buttonText}>Start Over</Text>
           </TouchableOpacity>
