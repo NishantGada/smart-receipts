@@ -352,9 +352,14 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
             />
 
             <TouchableOpacity
-              style={[styles.button, { backgroundColor: '#FF9500' }]}
+              style={[
+                styles.button,
+                { backgroundColor: '#FF9500' },
+                !splitInstructions.trim() && styles.buttonDisabled,
+              ]}
               onPress={processSplit}
               disabled={!splitInstructions.trim()}
+              activeOpacity={0.7}
             >
               <Text style={styles.buttonText}>Split Bill</Text>
             </TouchableOpacity>
@@ -430,6 +435,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     minWidth: 200,
     alignItems: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.4,
   },
   buttonText: {
     color: 'white',
