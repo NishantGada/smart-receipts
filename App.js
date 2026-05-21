@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useEffect, useState } from 'react';
-import { Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function App() {
   const [image, setImage] = useState(null);
@@ -273,7 +273,12 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
         )}
 
         {loading && (
-          <Text style={styles.loadingText}>Processing receipt... 🔄</Text>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>
+              {extractedData ? 'Splitting bill...' : 'Processing receipt...'}
+            </Text>
+          </View>
         )}
 
         {extractedData && !loading && (
@@ -453,8 +458,12 @@ const styles = StyleSheet.create({
     color: '#007AFF',
   },
 
-  loadingText: {
+  loadingContainer: {
     marginTop: 20,
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
     fontSize: 16,
     color: '#666',
     fontStyle: 'italic',
