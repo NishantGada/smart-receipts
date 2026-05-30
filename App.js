@@ -3,8 +3,98 @@ import { StatusBar } from 'expo-status-bar';
 import { useRef, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+function computeSplits(assignments, receipt) {
+  const amountsByPerson = {};
+  const itemsByPerson = {};
+  const warnings = [];
+  const seenItems = new Set();
+
+  for (const { item: itemName, claims, remainingTo } of assignments || []) {
+    const receiptItem = receipt.items.find(i => i.name === itemName);
+    if (!receiptItem) {
+      warnings.push(`Unknown item: ${itemName}`);
+      continue;
+    }
+    if (seenItems.has(itemName)) {
+      warnings.push(`Duplicate assignment for: ${itemName}`);
+      continue;
+    }
+    seenItems.add(itemName);
+
+    const qty = receiptItem.quantity;
+    const validClaims = (claims || []).filter(c => c && c.person && (c.units || 0) > 0);
+    const claimSum = validClaims.reduce((s, c) => s + c.units, 0);
+
+    const unitsByPerson = {};
+    if (claimSum > qty) {
+      const scale = qty / claimSum;
+      for (const c of validClaims) {
+        unitsByPerson[c.person] = (unitsByPerson[c.person] || 0) + c.units * scale;
+      }
+    } else {
+      for (const c of validClaims) {
+        unitsByPerson[c.person] = (unitsByPerson[c.person] || 0) + c.units;
+      }
+      const leftover = qty - claimSum;
+      if (leftover > 0) {
+        if (remainingTo) {
+          unitsByPerson[remainingTo] = (unitsByPerson[remainingTo] || 0) + leftover;
+        } else {
+          warnings.push(`${leftover} unit(s) of "${itemName}" unassigned`);
+        }
+      }
+    }
+
+    if (Object.keys(unitsByPerson).length === 0) {
+      warnings.push(`No one assigned to "${itemName}"`);
+      continue;
+    }
+
+    for (const [person, units] of Object.entries(unitsByPerson)) {
+      const fraction = units / qty;
+      const amount = receiptItem.totalPrice * fraction;
+      amountsByPerson[person] = (amountsByPerson[person] || 0) + amount;
+      if (!itemsByPerson[person]) itemsByPerson[person] = [];
+      const qtyLabel = Number.isInteger(units) ? `${units}x` : `${units.toFixed(2)}x`;
+      itemsByPerson[person].push(`${qtyLabel} ${receiptItem.name} ($${amount.toFixed(2)})`);
+    }
+  }
+
+  for (const item of receipt.items) {
+    if (!seenItems.has(item.name)) {
+      warnings.push(`Unassigned item: ${item.name}`);
+    }
+  }
+
+  // Spread tax + tip proportionally to each person's subtotal
+  const subtotalAssigned = Object.values(amountsByPerson).reduce((s, a) => s + a, 0);
+  const extra = (receipt.tax || 0) + (receipt.tip || 0);
+  if (extra > 0 && subtotalAssigned > 0) {
+    for (const person of Object.keys(amountsByPerson)) {
+      amountsByPerson[person] += (amountsByPerson[person] / subtotalAssigned) * extra;
+    }
+  }
+
+  const splits = Object.entries(amountsByPerson).map(([person, amount]) => ({
+    person,
+    amount: Math.round(amount * 100) / 100,
+    items: itemsByPerson[person] || [],
+  }));
+
+  const total = splits.reduce((s, sp) => s + sp.amount, 0);
+
+  return {
+    splits,
+    total: Math.round(total * 100) / 100,
+    validation: {
+      allItemsAssigned: warnings.length === 0,
+      message: warnings.join('; '),
+    },
+  };
+}
+
 export default function App() {
-  const [image, setImage] = useState(null);
+  const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [extractedData, setExtractedData] = useState(null);
 
@@ -31,6 +121,8 @@ export default function App() {
               {
                 text: `You are an expert receipt parser. Extract ALL information from this receipt.
 
+NOTE ON MULTIPLE IMAGES: If more than one image is provided, they together form ONE continuous receipt (e.g., a long receipt photographed in parts, top to bottom in the order shown). Merge all items across all images into a single combined output. Do NOT treat them as separate receipts.
+
 CRITICAL RULES:
 1. Look for QUANTITIES - if you see "5x Burger" it means 5 burgers, NOT 1
 2. Extract the UNIT PRICE if shown, or calculate it from total/quantity
@@ -49,12 +141,12 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
   "currency": "USD"
 }`
               },
-              {
+              ...images.map(img => ({
                 inline_data: {
                   mime_type: 'image/jpeg',
-                  data: image.base64
-                }
-              }
+                  data: img.base64,
+                },
+              })),
             ]
           }],
           generationConfig: {
@@ -97,44 +189,52 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
     try {
       const apiKey = process.env.EXPO_PUBLIC_GOOGLE_API_KEY;
 
-      const itemsList = extractedData.items.map(item =>
-        `${item.name}|qty:${item.quantity}|unit:${item.unitPrice.toFixed(2)}|total:${item.totalPrice.toFixed(2)}`
-      ).join('\n');
+      const itemsList = extractedData.items
+        .map((item, idx) => `${idx + 1}. "${item.name}" (qty: ${item.quantity})`)
+        .join('\n');
 
-      const prompt = `Parse these split instructions and calculate exact amounts per person.
-  
-  RECEIPT ITEMS (format: name|qty:X|unit:$X|total:$X):
-  ${itemsList}
-  
-  TOTAL RECEIPT: $${extractedData.total.toFixed(2)}
-  
-  INSTRUCTIONS:
-  ${splitInstructions}
-  
-  STEPS TO FOLLOW:
-  1. Extract all person names mentioned
-  2. For each person, list their items:
-     - Direct assignments: "X had Y" means X gets 1 Y
-     - Quantities: "2 pav bhaji nirmit" means nirmit gets 2 pav bhaji
-     - Equal splits: "divided between A, B, C" means divide total price by 3
-     - Exclusions: "except X" means split among others only
-  3. Calculate amounts using ONLY the unit/total prices provided above
-  4. Each person appears ONCE in the output
-  5. Sum all amounts - must equal receipt total
-  
-  EXAMPLE:
-  If "burger divided between Amy and Bob":
-  - Amy gets: 0.5 * burger_total
-  - Bob gets: 0.5 * burger_total
-  
-  Return JSON only (no markdown):
-  {
-    "splits": [
-      {"person": "Name", "items": ["1x Burger ($15.59)"], "amount": 15.59}
-    ],
-    "total": ${extractedData.total.toFixed(2)},
-    "validation": {"allItemsAssigned": true, "message": ""}
-  }`;
+      const prompt = `You parse natural-language split instructions into structured unit claims. DO NOT compute money or fractions — downstream code handles all math (including over-claim scaling and leftover allocation). Your only job: for each receipt item, list which people explicitly CLAIMED how many units, plus which single person (if any) absorbs the leftover.
+
+RECEIPT ITEMS:
+${itemsList}
+
+SPLIT INSTRUCTIONS:
+${splitInstructions}
+
+OUTPUT MODEL — for each item on the receipt:
+- "item": exact item name (copy verbatim from the receipt list)
+- "claims": array of { "person": string, "units": number } — units each person explicitly claimed for this item
+- "remainingTo": a single person string OR null — who absorbs any unclaimed units (or any user "remaining/rest on X" target)
+
+HOW TO PARSE THE INSTRUCTIONS:
+- "X on 1 burger" / "X on burger" / "X had a burger" → X claims 1 unit of burger
+- "X on 2 pav bhaji" / "X had 2 pav bhaji" → X claims 2 units of pav bhaji
+- "A, B, C on burger" → A claims 1, B claims 1, C claims 1 (each individually)
+- "A, B, C on 2 burgers" → A claims 2, B claims 2, C claims 2
+- "split/divided between A, B, C" → A claims 1, B claims 1, C claims 1 (downstream will scale if over-claim)
+- "remaining/rest on X" → set remainingTo: "X" on every item that has unclaimed units AND on every item not mentioned at all elsewhere
+- "except X" → claims listed for everyone EXCEPT X
+
+CRITICAL RULES:
+1. Output claims EVEN IF they sum to more than the item's available quantity. Do not pre-scale, do not pre-trim — downstream handles it.
+2. Output claims EVEN IF they sum to less than the item's available quantity. Set remainingTo if a "remaining" person was specified; otherwise null.
+3. For items NOT mentioned in the instructions at all: empty claims, and set remainingTo to the "remaining" person if specified, else null.
+4. Every receipt item MUST appear EXACTLY ONCE in the assignments array.
+5. Use EXACT item names from the receipt (copy verbatim, including capitalization and punctuation).
+
+Return JSON only (no markdown, no code blocks):
+{
+  "assignments": [
+    {
+      "item": "<exact item name>",
+      "claims": [
+        { "person": "Name1", "units": 1 },
+        { "person": "Name2", "units": 1 }
+      ],
+      "remainingTo": "Name3" // or null
+    }
+  ]
+}`;
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`, {
         method: 'POST',
@@ -168,17 +268,23 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
 
         console.log('Cleaned content:', cleanContent);
         const parsed = JSON.parse(cleanContent);
+        const computed = computeSplits(parsed.assignments, extractedData);
 
-        // Validation check
-        const calculatedTotal = parsed.splits.reduce((sum, split) => sum + split.amount, 0);
-        const receiptTotal = extractedData.total;
-
-        if (Math.abs(calculatedTotal - receiptTotal) > 0.05) {
-          console.warn(`Warning: Split total ($${calculatedTotal.toFixed(2)}) doesn't match receipt ($${receiptTotal.toFixed(2)})`);
+        if (Math.abs(computed.total - extractedData.total) > 0.05) {
+          console.warn(`Warning: Computed total ($${computed.total.toFixed(2)}) doesn't match receipt ($${extractedData.total.toFixed(2)})`);
+        }
+        if (!computed.validation.allItemsAssigned) {
+          console.warn(`Validation issues: ${computed.validation.message}`);
         }
 
-        setSplitResults(parsed);
-        console.log('Split results:', parsed);
+        setSplitResults(computed);
+        console.log('Split results:', computed);
+        console.log('--- Final Splits ---');
+        computed.splits.forEach((split) => {
+          const itemsLabel = split.items?.length ? ` [${split.items.join(', ')}]` : '';
+          console.log(`  ${split.person}: $${split.amount.toFixed(2)}${itemsLabel}`);
+        });
+        console.log(`  TOTAL: $${computed.total.toFixed(2)} (receipt: $${extractedData.total.toFixed(2)})`);
       }
     } catch (error) {
       console.error('Error processing split:', error);
@@ -206,13 +312,16 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 5,
+      orderedSelection: true,
       quality: 0.8,
       base64: true,
     });
 
     if (!result.canceled) {
-      setImage(result.assets[0]);
-      console.log('Image selected:', result.assets[0].uri);
+      setImages(result.assets);
+      console.log(`${result.assets.length} image(s) selected`);
     }
   };
 
@@ -221,7 +330,7 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
   };
 
   const resetAll = () => {
-    setImage(null);
+    setImages([]);
     setExtractedData(null);
     setSplitInstructions('');
     setSplitResults(null);
@@ -256,34 +365,50 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
           onScrollBeginDrag={dismissKeyboard}
         >
 
-        <View style={!image && !extractedData ? styles.centerContent : null}>
+        <View style={images.length === 0 && !extractedData ? styles.centerContent : null}>
           <Text style={styles.title}>Smart Receipt Splitter</Text>
           <TouchableOpacity
             style={styles.button}
             onPress={pickImage}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel="Upload a receipt image"
+            accessibilityLabel="Upload one or more receipt images"
             hitSlop={8}
           >
             <Text style={styles.buttonText}>Upload Receipt</Text>
           </TouchableOpacity>
+          <Text style={styles.uploadHint}>
+            Tip: pick multiple images in order if your receipt is split across photos
+          </Text>
         </View>
 
-        {image && (
+        {images.length > 0 && (
           <View style={styles.imageContainer}>
-            <Image
-              source={{ uri: image.uri }}
-              style={[
-                styles.image,
-                { aspectRatio: (image.width / image.height) || 1 },
-              ]}
-            />
-            <Text style={styles.imageText}>Receipt loaded! ✅</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.thumbnailStrip}
+            >
+              {images.map((img, idx) => (
+                <View key={img.uri ?? idx} style={styles.thumbnailWrapper}>
+                  <Image source={{ uri: img.uri }} style={styles.thumbnail} />
+                  {images.length > 1 && (
+                    <View style={styles.thumbnailBadge}>
+                      <Text style={styles.thumbnailBadgeText}>{idx + 1}</Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+            <Text style={styles.imageText}>
+              {images.length === 1
+                ? 'Receipt loaded! ✅'
+                : `${images.length} parts loaded! ✅`}
+            </Text>
           </View>
         )}
 
-        {image && !loading && (
+        {images.length > 0 && !loading && (
           <TouchableOpacity
             style={[styles.button, { marginTop: 20, backgroundColor: '#34C759' }]}
             onPress={processReceipt}
@@ -431,7 +556,7 @@ Return ONLY valid JSON (no markdown, no code blocks, no explanation):
           </View>
         )}
 
-        {(image || extractedData || splitResults) && !loading && (
+        {(images.length > 0 || extractedData || splitResults) && !loading && (
           <TouchableOpacity
             style={[styles.button, styles.startOverButton]}
             onPress={resetAll}
@@ -499,18 +624,50 @@ const styles = StyleSheet.create({
     marginTop: 20,
     alignItems: 'center',
     width: '100%',
-    paddingHorizontal: 20,
   },
-  image: {
-    width: '100%',
+  thumbnailStrip: {
+    paddingHorizontal: 10,
+  },
+  thumbnailWrapper: {
+    marginRight: 10,
+    position: 'relative',
+  },
+  thumbnail: {
+    width: 140,
+    height: 200,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#ddd',
+    resizeMode: 'cover',
+  },
+  thumbnailBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0, 122, 255, 0.9)',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbnailBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   imageText: {
     marginTop: 10,
     fontSize: 16,
     color: '#007AFF',
+  },
+  uploadHint: {
+    marginTop: 12,
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
 
   loadingContainer: {
