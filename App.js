@@ -1,7 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useRef, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { colors, radii, shadows, spacing, typography } from './theme';
 
 function computeSplits(assignments, receipt) {
   const amountsByPerson = {};
@@ -365,211 +367,242 @@ Return JSON only (no markdown, no code blocks):
           onScrollBeginDrag={dismissKeyboard}
         >
 
-        <View style={images.length === 0 && !extractedData ? styles.centerContent : null}>
-          <Text style={styles.title}>Smart Receipt Splitter</Text>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={pickImage}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Upload one or more receipt images"
-            hitSlop={8}
-          >
-            <Text style={styles.buttonText}>Upload Receipt</Text>
-          </TouchableOpacity>
-          <Text style={styles.uploadHint}>
-            Tip: pick multiple images in order if your receipt is split across photos
-          </Text>
-        </View>
+          {images.length === 0 && !extractedData && (
+            <View style={styles.centerContent}>
+              <Text style={styles.title}>Smart Receipt</Text>
+              <Text style={styles.subtitle}>Snap a receipt. Split it naturally.</Text>
+              <TouchableOpacity
+                style={styles.buttonPrimary}
+                onPress={pickImage}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Upload one or more receipt images"
+                hitSlop={8}
+              >
+                <Ionicons name="cloud-upload-outline" size={18} color={colors.textInverse} />
+                <Text style={styles.buttonPrimaryText}>Upload receipt</Text>
+              </TouchableOpacity>
+              <Text style={styles.uploadHint}>
+                Pick multiple images in order if your receipt spans several photos.
+              </Text>
+            </View>
+          )}
 
-        {images.length > 0 && (
-          <View style={styles.imageContainer}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.thumbnailStrip}
+          {images.length > 0 && (
+            <View style={styles.imageContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.thumbnailStrip}
+              >
+                {images.map((img, idx) => (
+                  <View key={img.uri ?? idx} style={styles.thumbnailWrapper}>
+                    <Image source={{ uri: img.uri }} style={styles.thumbnail} />
+                    {images.length > 1 && (
+                      <View style={styles.thumbnailBadge}>
+                        <Text style={styles.thumbnailBadgeText}>{idx + 1}</Text>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+              <View style={styles.imageStatus}>
+                <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                <Text style={styles.imageStatusText}>
+                  {images.length === 1 ? 'Receipt loaded' : `${images.length} parts loaded`}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {images.length > 0 && !loading && (
+            <TouchableOpacity
+              style={[styles.buttonPrimary, styles.buttonSpaced]}
+              onPress={processReceipt}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Process the uploaded receipt"
+              hitSlop={8}
             >
-              {images.map((img, idx) => (
-                <View key={img.uri ?? idx} style={styles.thumbnailWrapper}>
-                  <Image source={{ uri: img.uri }} style={styles.thumbnail} />
-                  {images.length > 1 && (
-                    <View style={styles.thumbnailBadge}>
-                      <Text style={styles.thumbnailBadgeText}>{idx + 1}</Text>
-                    </View>
+              <Ionicons name="sparkles-outline" size={18} color={colors.textInverse} />
+              <Text style={styles.buttonPrimaryText}>Process receipt</Text>
+            </TouchableOpacity>
+          )}
+
+          {loading && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.accent} />
+              <Text style={styles.loadingText}>
+                {extractedData ? 'Splitting bill…' : 'Reading receipt…'}
+              </Text>
+            </View>
+          )}
+
+          {extractedData && !loading && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Receipt details</Text>
+
+              <View style={styles.itemsList}>
+                {extractedData.items.map((item, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.itemRow,
+                      index === extractedData.items.length - 1 && styles.itemRowLast,
+                    ]}
+                  >
+                    <Text style={styles.itemName}>
+                      {item.quantity > 1 ? `${item.quantity}× ` : ''}{item.name}
+                    </Text>
+                    <Text style={styles.itemPrice}>${item.totalPrice.toFixed(2)}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.totalsContainer}>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Subtotal</Text>
+                  <Text style={styles.totalValue}>${extractedData.subtotal.toFixed(2)}</Text>
+                </View>
+                {extractedData.tax > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Tax</Text>
+                    <Text style={styles.totalValue}>${extractedData.tax.toFixed(2)}</Text>
+                  </View>
+                )}
+                {extractedData.tip > 0 && (
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Tip</Text>
+                    <Text style={styles.totalValue}>${extractedData.tip.toFixed(2)}</Text>
+                  </View>
+                )}
+                <View style={[styles.totalRow, styles.finalTotal]}>
+                  <Text style={styles.totalLabelBold}>Total</Text>
+                  <Text style={styles.totalValueBold}>${extractedData.total.toFixed(2)}</Text>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.validationRow,
+                  extractedData.validation.matches ? styles.validationSuccessBg : styles.validationWarningBg,
+                ]}
+              >
+                <Ionicons
+                  name={extractedData.validation.matches ? 'checkmark-circle' : 'alert-circle'}
+                  size={14}
+                  color={extractedData.validation.matches ? colors.success : colors.warning}
+                />
+                <Text
+                  style={
+                    extractedData.validation.matches
+                      ? styles.validationSuccessText
+                      : styles.validationWarningText
+                  }
+                >
+                  {extractedData.validation.matches
+                    ? 'Math checks out'
+                    : `$${Math.abs(extractedData.validation.discrepancy).toFixed(2)} discrepancy`}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {extractedData && !splitResults && (
+            <View style={styles.splitInputContainer}>
+              <Text style={styles.sectionTitle}>How to split</Text>
+              <Text style={styles.helperText}>
+                Try: "bananas on Alex, rolls and bread on Beth, sauce split between Alex and Beth"
+              </Text>
+
+              <TextInput
+                ref={textInputRef}
+                style={styles.textInput}
+                multiline
+                numberOfLines={4}
+                placeholder="Describe how to split the bill…"
+                placeholderTextColor={colors.textSubtle}
+                value={splitInstructions}
+                onChangeText={setSplitInstructions}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 300);
+                }}
+              />
+
+              <TouchableOpacity
+                style={[
+                  styles.buttonPrimary,
+                  !splitInstructions.trim() && styles.buttonDisabled,
+                ]}
+                onPress={processSplit}
+                disabled={!splitInstructions.trim()}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Split the bill using the instructions above"
+                accessibilityState={{ disabled: !splitInstructions.trim() }}
+                hitSlop={8}
+              >
+                <Ionicons name="git-branch-outline" size={18} color={colors.textInverse} />
+                <Text style={styles.buttonPrimaryText}>Split bill</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {splitResults && (
+            <View style={styles.resultsContainer}>
+              <Text style={styles.sectionTitle}>Split results</Text>
+
+              {splitResults.splits.map((split, index) => (
+                <View key={index} style={styles.personCard}>
+                  <View style={styles.personCardHeader}>
+                    <Text style={styles.personName}>{split.person}</Text>
+                    <Text style={styles.personAmount}>${split.amount.toFixed(2)}</Text>
+                  </View>
+                  {split.items.length > 0 && (
+                    <Text style={styles.personItems}>{split.items.join(' · ')}</Text>
                   )}
                 </View>
               ))}
-            </ScrollView>
-            <Text style={styles.imageText}>
-              {images.length === 1
-                ? 'Receipt loaded! ✅'
-                : `${images.length} parts loaded! ✅`}
-            </Text>
-          </View>
-        )}
 
-        {images.length > 0 && !loading && (
-          <TouchableOpacity
-            style={[styles.button, { marginTop: 20, backgroundColor: '#34C759' }]}
-            onPress={processReceipt}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Process the uploaded receipt"
-            hitSlop={8}
-          >
-            <Text style={styles.buttonText}>Process Receipt</Text>
-          </TouchableOpacity>
-        )}
-
-        {loading && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#007AFF" />
-            <Text style={styles.loadingText}>
-              {extractedData ? 'Splitting bill...' : 'Processing receipt...'}
-            </Text>
-          </View>
-        )}
-
-        {extractedData && !loading && (
-          <View style={styles.extractedContainer}>
-            <Text style={styles.sectionTitle}>Receipt Details</Text>
-
-            <View style={styles.itemsList}>
-              {extractedData.items.map((item, index) => (
-                <View key={index} style={styles.itemRow}>
-                  <Text style={styles.itemName}>
-                    {item.quantity > 1 ? `${item.quantity}x ` : ''}{item.name}
-                  </Text>
-                  <Text style={styles.itemPrice}>${item.totalPrice.toFixed(2)}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.totalsContainer}>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Subtotal:</Text>
-                <Text style={styles.totalValue}>${extractedData.subtotal.toFixed(2)}</Text>
+              <View style={styles.finalTotalResult}>
+                <Text style={styles.totalLabelBold}>Total</Text>
+                <Text style={styles.totalValueBold}>${splitResults.total.toFixed(2)}</Text>
               </View>
-              {extractedData.tax > 0 && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Tax:</Text>
-                  <Text style={styles.totalValue}>${extractedData.tax.toFixed(2)}</Text>
-                </View>
-              )}
-              {extractedData.tip > 0 && (
-                <View style={styles.totalRow}>
-                  <Text style={styles.totalLabel}>Tip:</Text>
-                  <Text style={styles.totalValue}>${extractedData.tip.toFixed(2)}</Text>
-                </View>
-              )}
-              <View style={[styles.totalRow, styles.finalTotal]}>
-                <Text style={styles.totalLabelBold}>Total:</Text>
-                <Text style={styles.totalValueBold}>${extractedData.total.toFixed(2)}</Text>
-              </View>
+
+              <TouchableOpacity
+                style={[styles.buttonSecondary, styles.buttonSpaced]}
+                onPress={() => {
+                  setSplitResults(null);
+                  setSplitInstructions('');
+                }}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Edit split instructions and recalculate"
+                hitSlop={8}
+              >
+                <Ionicons name="refresh-outline" size={18} color={colors.accent} />
+                <Text style={styles.buttonSecondaryText}>Split again</Text>
+              </TouchableOpacity>
             </View>
+          )}
 
-            {extractedData.validation.matches ? (
-              <Text style={styles.validationSuccess}>✅ Math checks out!</Text>
-            ) : (
-              <Text style={styles.validationError}>
-                ⚠️ Discrepancy: ${Math.abs(extractedData.validation.discrepancy).toFixed(2)}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {extractedData && !splitResults && (
-          <View style={styles.splitInputContainer}>
-            <Text style={styles.sectionTitle}>How to Split?</Text>
-            <Text style={styles.instructionText}>
-              Example: "bananas on Alex, rolls and bread on Beth, sauce split between Alex and Beth"
-            </Text>
-
-            <TextInput
-              ref={textInputRef}
-              style={styles.textInput}
-              multiline
-              numberOfLines={4}
-              placeholder="Enter split instructions..."
-              value={splitInstructions}
-              onChangeText={setSplitInstructions}
-              onFocus={() => {
-                setTimeout(() => {
-                  scrollViewRef.current?.scrollToEnd({ animated: true });
-                }, 300);
-              }}
-            />
-
+          {(images.length > 0 || extractedData || splitResults) && !loading && (
             <TouchableOpacity
-              style={[
-                styles.button,
-                { backgroundColor: '#FF9500' },
-                !splitInstructions.trim() && styles.buttonDisabled,
-              ]}
-              onPress={processSplit}
-              disabled={!splitInstructions.trim()}
+              style={styles.buttonGhost}
+              onPress={resetAll}
               activeOpacity={0.7}
               accessibilityRole="button"
-              accessibilityLabel="Split the bill using the instructions above"
-              accessibilityState={{ disabled: !splitInstructions.trim() }}
+              accessibilityLabel="Discard everything and start over with a new receipt"
               hitSlop={8}
             >
-              <Text style={styles.buttonText}>Split Bill</Text>
+              <Ionicons name="close-outline" size={16} color={colors.textMuted} />
+              <Text style={styles.buttonGhostText}>Start over</Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
 
-        {splitResults && (
-          <View style={styles.resultsContainer}>
-            <Text style={styles.sectionTitle}>Split Results</Text>
-
-            {splitResults.splits.map((split, index) => (
-              <View key={index} style={styles.personCard}>
-                <Text style={styles.personName}>{split.person}</Text>
-                <Text style={styles.personAmount}>${split.amount.toFixed(2)}</Text>
-                {split.items.length > 0 && (
-                  <Text style={styles.personItems}>
-                    Items: {split.items.join(', ')}
-                  </Text>
-                )}
-              </View>
-            ))}
-
-            <View style={styles.finalTotalResult}>
-              <Text style={styles.totalLabelBold}>Total:</Text>
-              <Text style={styles.totalValueBold}>${splitResults.total.toFixed(2)}</Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.button, { marginTop: 20, backgroundColor: '#666' }]}
-              onPress={() => {
-                setSplitResults(null);
-                setSplitInstructions('');
-              }}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Edit split instructions and recalculate"
-              hitSlop={8}
-            >
-              <Text style={styles.buttonText}>Split Again</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {(images.length > 0 || extractedData || splitResults) && !loading && (
-          <TouchableOpacity
-            style={[styles.button, styles.startOverButton]}
-            onPress={resetAll}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Discard everything and start over with a new receipt"
-            hitSlop={8}
-          >
-            <Text style={styles.buttonText}>Start Over</Text>
-          </TouchableOpacity>
-        )}
-
-        <StatusBar style="auto" />
+          <StatusBar style="dark" />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -579,14 +612,14 @@ Return JSON only (no markdown, no code blocks):
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   container: {
     flexGrow: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     alignItems: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 20,
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.xl,
   },
   centerContent: {
     flex: 1,
@@ -594,235 +627,329 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+
+  // Typography
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 30,
+    fontSize: typography.display,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
+    letterSpacing: -0.5,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
-  button: {
-    backgroundColor: '#007AFF',
-    padding: 15,
-    borderRadius: 10,
-    minWidth: 200,
+  subtitle: {
+    fontSize: typography.body,
+    color: colors.textMuted,
+    marginBottom: spacing.xxl,
+    textAlign: 'center',
+  },
+  sectionTitle: {
+    fontSize: typography.heading,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  cardTitle: {
+    fontSize: typography.heading,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
+    marginBottom: spacing.lg,
+  },
+  helperText: {
+    fontSize: typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+    lineHeight: 18,
+  },
+  uploadHint: {
+    marginTop: spacing.lg,
+    fontSize: typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+    lineHeight: 18,
+  },
+
+  // Buttons
+  buttonPrimary: {
+    backgroundColor: colors.accent,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.lg,
+    minWidth: 240,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    ...shadows.sm,
+  },
+  buttonPrimaryText: {
+    color: colors.textInverse,
+    fontSize: typography.body,
+    fontWeight: typography.weightSemibold,
+    letterSpacing: 0.2,
+  },
+  buttonSecondary: {
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 13,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.lg,
+    minWidth: 240,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  buttonSecondaryText: {
+    color: colors.accent,
+    fontSize: typography.body,
+    fontWeight: typography.weightSemibold,
+    letterSpacing: 0.2,
+  },
+  buttonGhost: {
+    marginTop: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  buttonGhostText: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    fontWeight: typography.weightMedium,
   },
   buttonDisabled: {
     opacity: 0.4,
   },
-  startOverButton: {
-    marginTop: 20,
-    backgroundColor: '#FF3B30',
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+  buttonSpaced: {
+    marginTop: spacing.xl,
   },
 
-  // Image styles
+  // Image strip
   imageContainer: {
-    marginTop: 20,
+    marginTop: spacing.xl,
     alignItems: 'center',
     width: '100%',
   },
   thumbnailStrip: {
-    paddingHorizontal: 10,
+    paddingHorizontal: spacing.xs,
   },
   thumbnailWrapper: {
-    marginRight: 10,
+    marginRight: spacing.md,
     position: 'relative',
   },
   thumbnail: {
     width: 140,
     height: 200,
-    borderRadius: 10,
+    borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: colors.border,
     resizeMode: 'cover',
   },
   thumbnailBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    backgroundColor: 'rgba(0, 122, 255, 0.9)',
-    borderRadius: 12,
-    width: 24,
-    height: 24,
+    top: 8,
+    right: 8,
+    backgroundColor: colors.text,
+    borderRadius: radii.pill,
+    width: 22,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   thumbnailBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
+    color: colors.textInverse,
+    fontSize: 11,
+    fontWeight: typography.weightSemibold,
   },
-  imageText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#007AFF',
+  imageStatus: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
-  uploadHint: {
-    marginTop: 12,
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
-    textAlign: 'center',
-    paddingHorizontal: 20,
+  imageStatusText: {
+    fontSize: typography.caption,
+    color: colors.textMuted,
+    fontWeight: typography.weightMedium,
   },
 
+  // Loading
   loadingContainer: {
-    marginTop: 20,
+    marginTop: spacing.xl,
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
-    fontStyle: 'italic',
+    marginTop: spacing.md,
+    fontSize: typography.caption,
+    color: colors.textMuted,
+    fontWeight: typography.weightMedium,
   },
 
-  // extracted information styles
-  extractedContainer: {
-    marginTop: 20,
+  // Receipt details card
+  card: {
+    marginTop: spacing.xl,
     width: '100%',
-    backgroundColor: '#f8f8f8',
-    borderRadius: 10,
-    padding: 15,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: spacing.xl,
   },
   itemsList: {
-    marginBottom: 15,
+    marginBottom: spacing.lg,
   },
   itemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: colors.border,
+  },
+  itemRowLast: {
+    borderBottomWidth: 0,
   },
   itemName: {
-    fontSize: 14,
+    fontSize: typography.body,
+    color: colors.text,
     flex: 1,
+    marginRight: spacing.md,
   },
   itemPrice: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: typography.body,
+    fontWeight: typography.weightMedium,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
   totalsContainer: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 2,
-    borderTopColor: '#ccc',
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 5,
+    paddingVertical: spacing.xs,
   },
   totalLabel: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: typography.body,
+    color: colors.textMuted,
   },
   totalValue: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: typography.body,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
   totalLabelBold: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: typography.body,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
   },
   totalValueBold: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: typography.heading,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
   finalTotal: {
-    marginTop: 5,
-    paddingTop: 10,
-    borderTopWidth: 2,
-    borderTopColor: '#000',
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderStrong,
   },
-  validationSuccess: {
-    marginTop: 15,
-    textAlign: 'center',
-    color: '#34C759',
-    fontSize: 16,
-    fontWeight: '600',
+  validationRow: {
+    marginTop: spacing.lg,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
   },
-  validationError: {
-    marginTop: 15,
-    textAlign: 'center',
-    color: '#FF3B30',
-    fontSize: 16,
-    fontWeight: '600',
+  validationSuccessBg: {
+    backgroundColor: colors.successMuted,
+  },
+  validationWarningBg: {
+    backgroundColor: colors.warningMuted,
+  },
+  validationSuccessText: {
+    fontSize: typography.caption,
+    color: colors.success,
+    fontWeight: typography.weightMedium,
+  },
+  validationWarningText: {
+    fontSize: typography.caption,
+    color: colors.warning,
+    fontWeight: typography.weightMedium,
   },
 
-  // text input styles
+  // Split input
   splitInputContainer: {
-    marginTop: 20,
+    marginTop: spacing.xl,
     width: '100%',
-  },
-  instructionText: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
-    marginBottom: 10,
-    textAlign: 'center',
   },
   textInput: {
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 10,
-    fontSize: 14,
-    minHeight: 100,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    fontSize: typography.body,
+    color: colors.text,
+    minHeight: 110,
     textAlignVertical: 'top',
-    backgroundColor: '#fff',
-    marginBottom: 15,
+    backgroundColor: colors.surfaceElevated,
+    marginBottom: spacing.lg,
+    lineHeight: 22,
   },
 
-  // result styles
+  // Results
   resultsContainer: {
-    marginTop: 20,
+    marginTop: spacing.xl,
     width: '100%',
-    backgroundColor: '#f0f9ff',
-    borderRadius: 10,
-    padding: 15,
   },
   personCard: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  personCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
   },
   personName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
+    fontSize: typography.heading,
+    fontWeight: typography.weightSemibold,
+    color: colors.text,
   },
   personAmount: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#007AFF',
-    marginBottom: 5,
+    fontSize: typography.title,
+    fontWeight: typography.weightSemibold,
+    color: colors.accent,
+    fontVariant: ['tabular-nums'],
   },
   personItems: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+    marginTop: spacing.sm,
+    fontSize: typography.caption,
+    color: colors.textMuted,
+    lineHeight: 18,
   },
   finalTotalResult: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 15,
-    paddingTop: 15,
-    borderTopWidth: 2,
-    borderTopColor: '#007AFF',
+    alignItems: 'baseline',
+    marginTop: spacing.md,
+    paddingTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderStrong,
   },
 });
