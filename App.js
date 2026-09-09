@@ -1,3 +1,4 @@
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
@@ -323,12 +324,187 @@ function GroupsScreen({ onOpen }) {
 
 // --- one group: members, scan, history -------------------------------------
 
+// --- receipt metadata ------------------------------------------------------
+
+/** Today as YYYY-MM-DD in the phone's own timezone, not UTC. */
+function todayIso() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Render YYYY-MM-DD for display without letting UTC shift the day. */
+function prettyDate(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+}
+
+function DateField({ value, onChange, label }) {
+  const [open, setOpen] = useState(false);
+  const [y, m, d] = (value || todayIso()).split('-').map(Number);
+  const asDate = new Date(y, m - 1, d);
+
+  const commit = (event, picked) => {
+    // Android fires with type 'dismissed' on cancel; iOS reports every spin.
+    if (Platform.OS === 'android') setOpen(false);
+    if (event?.type === 'dismissed' || !picked) return;
+    const pad = (n) => String(n).padStart(2, '0');
+    onChange(
+      `${picked.getFullYear()}-${pad(picked.getMonth() + 1)}-${pad(picked.getDate())}`
+    );
+  };
+
+  return (
+    <View>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((o) => !o)}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}, currently ${prettyDate(value)}. Tap to change.`}
+        style={({ pressed }) => [s.input, s.dateField, pressed && { opacity: 0.7 }]}
+      >
+        <Text style={s.dateFieldText}>{prettyDate(value)}</Text>
+        <Ionicons name="calendar-outline" size={17} color={colors.textMuted} />
+      </Pressable>
+
+      {open ? (
+        <View style={Platform.OS === 'ios' ? s.pickerWrap : null}>
+          <DateTimePicker
+            value={asDate}
+            mode="date"
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            maximumDate={new Date()}
+            onChange={commit}
+          />
+          {Platform.OS === 'ios' ? (
+            <Button label="Done" variant="secondary" onPress={() => setOpen(false)} />
+          ) : null}
+        </View>
+      ) : null}
+
+      <View style={s.quickRow}>
+        {[
+          ['Today', 0],
+          ['Yesterday', 1],
+        ].map(([text, back]) => {
+          const dt = new Date();
+          dt.setDate(dt.getDate() - back);
+          const pad = (n) => String(n).padStart(2, '0');
+          const iso = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+          const active = value === iso;
+          return (
+            <Pressable
+              key={text}
+              onPress={() => onChange(iso)}
+              accessibilityRole="button"
+              accessibilityLabel={`Set ${label} to ${text}`}
+              style={[s.quickChip, active && s.quickChipActive]}
+            >
+              <Text style={[s.quickChipText, active && s.quickChipTextActive]}>{text}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The four user-supplied fields on a receipt. Shared by the scan flow and the
+ * edit screen so both validate identically — the server checks the same rules
+ * again, this is just for immediate feedback.
+ */
+function ReceiptMetaForm({ value, onChange, showTotalHint }) {
+  const set = (k) => (v) => onChange({ ...value, [k]: v });
+
+  return (
+    <View style={{ gap: spacing.md }}>
+      <View>
+        <Text style={s.fieldLabel}>Title</Text>
+        <TextInput
+          value={value.title}
+          onChangeText={set('title')}
+          placeholder="e.g. Patel Brothers grocery run"
+          placeholderTextColor={colors.textSubtle}
+          style={s.input}
+          maxLength={200}
+          accessibilityLabel="Receipt title"
+        />
+      </View>
+
+      <View>
+        <Text style={s.fieldLabel}>Description <Text style={s.optional}>· optional</Text></Text>
+        <TextInput
+          value={value.description}
+          onChangeText={set('description')}
+          placeholder="Anything worth remembering later"
+          placeholderTextColor={colors.textSubtle}
+          style={[s.input, s.inputMultiline]}
+          multiline
+          accessibilityLabel="Receipt description, optional"
+        />
+      </View>
+
+      <DateField label="Transaction date" value={value.transaction_date} onChange={set('transaction_date')} />
+
+      <View>
+        <Text style={s.fieldLabel}>Total on the receipt <Text style={s.optional}>· optional</Text></Text>
+        <TextInput
+          value={value.stated_total}
+          onChangeText={(t) => set('stated_total')(t.replace(/[^0-9.]/g, ''))}
+          placeholder="113.03"
+          placeholderTextColor={colors.textSubtle}
+          keyboardType="decimal-pad"
+          style={s.input}
+          accessibilityLabel="Total printed on the receipt, optional"
+        />
+        {showTotalHint ? (
+          <Text style={s.muted}>
+            Type the total you can read on the paper. It gets checked against what
+            the scan found, so a misread line shows up straight away.
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const emptyMeta = () => ({
+  title: '',
+  description: '',
+  transaction_date: todayIso(),
+  stated_total: '',
+});
+
+/** Client-side mirror of the server's rules, for inline feedback. */
+function metaProblem(meta) {
+  if (!meta.title.trim()) return 'Give this receipt a title.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(meta.transaction_date)) return 'Pick a transaction date.';
+  if (meta.stated_total !== '' && !Number.isFinite(Number(meta.stated_total))) {
+    return 'The total needs to be a number.';
+  }
+  return null;
+}
+
+/** Shape the form's strings into the JSON body the API expects. */
+const metaBody = (meta) => ({
+  title: meta.title.trim(),
+  description: meta.description.trim(),
+  transaction_date: meta.transaction_date,
+  stated_total: meta.stated_total === '' ? null : Number(meta.stated_total),
+});
+
 function GroupScreen({ group, onBack, onSplitReady, onOpenReceipt }) {
   const [members, setMembers] = useState([]);
   const [history, setHistory] = useState([]);
   const [name, setName] = useState('');
   const [stage, setStage] = useState(null);
   const [error, setError] = useState(null);
+  const [composing, setComposing] = useState(false);
+  const [meta, setMeta] = useState(emptyMeta);
 
   const load = useCallback(async () => {
     try {
@@ -369,6 +545,9 @@ function GroupScreen({ group, onBack, onSplitReady, onOpenReceipt }) {
       Alert.alert('Add members first', 'A receipt needs people to split between.');
       return;
     }
+    const problem = metaProblem(meta);
+    if (problem) { Alert.alert('Almost there', problem); return; }
+
     const images = await pickReceiptImages();
     if (!images) return;
     try {
@@ -377,8 +556,10 @@ function GroupScreen({ group, onBack, onSplitReady, onOpenReceipt }) {
       setStage('Matching against past splits…');
       const session = await api(`/groups/${group.id}/receipts`, {
         method: 'POST',
-        body: { ocr, image_count: images.length },
+        body: { ocr, image_count: images.length, ...metaBody(meta) },
       });
+      setComposing(false);
+      setMeta(emptyMeta());
       onSplitReady({ ...session, group, previewUri: images[0]?.uri });
     } catch (err) {
       Alert.alert('Could not process receipt', err.message);
@@ -430,8 +611,28 @@ function GroupScreen({ group, onBack, onSplitReady, onOpenReceipt }) {
             <ActivityIndicator color={colors.accent} />
             <Text style={s.stageText}>{stage}</Text>
           </View>
+        ) : composing ? (
+          <View style={s.composeCard}>
+            <Text style={s.sectionLabel}>New receipt</Text>
+            <ReceiptMetaForm value={meta} onChange={setMeta} showTotalHint />
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs }}>
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onPress={() => { setComposing(false); setMeta(emptyMeta()); }}
+                style={{ flex: 1 }}
+              />
+              <Button
+                label="Choose images"
+                icon="camera-outline"
+                onPress={scan}
+                disabled={!!metaProblem(meta)}
+                style={{ flex: 1.4 }}
+              />
+            </View>
+          </View>
         ) : (
-          <Button label="Scan a receipt" icon="camera-outline" onPress={scan} />
+          <Button label="Scan a receipt" icon="camera-outline" onPress={() => setComposing(true)} />
         )}
 
         <Text style={[s.sectionLabel, { marginTop: spacing.xl }]}>History</Text>
@@ -443,13 +644,15 @@ function GroupScreen({ group, onBack, onSplitReady, onOpenReceipt }) {
               key={r.id}
               onPress={() => onOpenReceipt(r.id)}
               accessibilityRole="button"
-              accessibilityLabel={`Open receipt from ${new Date(r.created_at).toLocaleDateString()}`}
+              accessibilityLabel={`Open ${r.title || 'untitled receipt'} from ${prettyDate(r.transaction_date)}`}
               style={({ pressed }) => [s.card, pressed && s.cardPressed]}
             >
               <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>{fmt(r.billable_total)}</Text>
+                <Text style={s.cardTitle} numberOfLines={1}>
+                  {r.title || 'Untitled receipt'}
+                </Text>
                 <Text style={s.cardSub}>
-                  {new Date(r.created_at).toLocaleDateString()} · {r.item_count} items
+                  {prettyDate(r.transaction_date)} · {fmt(r.billable_total)} · {r.item_count} items
                   {r.refunded_count ? ` · ${r.refunded_count} refunded` : ''}
                   {r.complimentary_count ? ` · ${r.complimentary_count} free` : ''}
                 </Text>
@@ -1002,13 +1205,69 @@ function Row({ label, value, strong, tone }) {
 
 // --- saved receipt ---------------------------------------------------------
 
+/** Edit a saved receipt's title, description, date, and stated total. */
+function EditReceiptScreen({ receipt, onBack, onSaved }) {
+  const [meta, setMeta] = useState({
+    title: receipt.title || '',
+    description: receipt.description || '',
+    transaction_date: receipt.transaction_date || todayIso(),
+    stated_total: receipt.stated_total == null ? '' : String(receipt.stated_total),
+  });
+  const [saving, setSaving] = useState(false);
+  const problem = metaProblem(meta);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api(`/receipts/${receipt.id}`, {
+        method: 'PATCH',
+        body: metaBody(meta),
+      });
+      onSaved(updated);
+    } catch (err) {
+      Alert.alert('Could not save', err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Header title="Edit receipt" onBack={onBack} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <ReceiptMetaForm value={meta} onChange={setMeta} showTotalHint />
+          {problem ? <Banner tone="warning">{problem}</Banner> : null}
+          <Button
+            label="Save changes"
+            icon="checkmark"
+            onPress={save}
+            disabled={!!problem}
+            loading={saving}
+            style={{ marginTop: spacing.lg }}
+          />
+          <Text style={[s.muted, { marginTop: spacing.md }]}>
+            Item splits aren't changed here — only the receipt's own details.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
+  );
+}
+
 function ReceiptScreen({ receiptId, onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api(`/receipts/${receiptId}`).then(setData).catch((e) => setError(e.message));
   }, [receiptId]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (error) {
     return (
@@ -1027,16 +1286,46 @@ function ReceiptScreen({ receiptId, onBack }) {
     );
   }
 
+  if (editing) {
+    return (
+      <EditReceiptScreen
+        receipt={data}
+        onBack={() => setEditing(false)}
+        onSaved={(updated) => {
+          setData((prev) => ({ ...prev, ...updated }));
+          setEditing(false);
+        }}
+      />
+    );
+  }
+
   const billable = data.per_person.reduce((sum, p) => sum + p.cents, 0);
 
   return (
     <View style={{ flex: 1 }}>
       <Header
-        title={data.label || 'Receipt'}
-        subtitle={new Date(data.created_at).toLocaleString()}
+        title={data.title || 'Untitled receipt'}
+        // The transaction date, not the upload timestamp. Upload is recorded but
+        // deliberately not shown.
+        subtitle={prettyDate(data.transaction_date)}
         onBack={onBack}
+        right={
+          <Pressable
+            onPress={() => setEditing(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Edit this receipt's details"
+            hitSlop={8}
+            style={s.backBtn}
+          >
+            <Ionicons name="create-outline" size={20} color={colors.accent} />
+          </Pressable>
+        }
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing.xxxl }}>
+        {data.description ? (
+          <Text style={[s.muted, { marginBottom: spacing.md }]}>{data.description}</Text>
+        ) : null}
+
         <View style={s.totalsCard}>
           <Text style={s.sectionLabel}>Who owes what</Text>
           {data.per_person.map((p) => (
@@ -1045,6 +1334,17 @@ function ReceiptScreen({ receiptId, onBack }) {
           <View style={s.divider} />
           <Row label="Billable total" value={fmt(billable / 100)} strong />
           <Row label="Printed total" value={fmt(data.printed.total)} />
+          {data.stated_total != null ? (
+            <Row
+              label="Total you entered"
+              value={fmt(data.stated_total)}
+              tone={
+                Number(data.stated_total) === Number(data.printed.total)
+                  ? colors.success
+                  : colors.error
+              }
+            />
+          ) : null}
         </View>
 
         <Text style={[s.sectionLabel, { marginTop: spacing.lg }]}>Items</Text>
@@ -1222,6 +1522,36 @@ const s = StyleSheet.create({
     borderRadius: radii.md, backgroundColor: colors.errorMuted,
   },
   removeText: { color: colors.error, fontSize: typography.caption, fontWeight: typography.weightSemibold },
+
+  fieldLabel: {
+    fontSize: typography.caption, fontWeight: typography.weightSemibold,
+    color: colors.textMuted, marginBottom: spacing.xs,
+  },
+  optional: { fontWeight: typography.weightRegular, color: colors.textSubtle },
+  inputMultiline: { minHeight: 68, textAlignVertical: 'top', paddingTop: spacing.sm },
+
+  dateField: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  dateFieldText: { fontSize: typography.body, color: colors.text },
+  pickerWrap: {
+    backgroundColor: colors.surface, borderRadius: radii.lg,
+    borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm, padding: spacing.sm,
+  },
+
+  quickRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  quickChip: {
+    paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
+    borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  quickChipActive: { backgroundColor: colors.accentMuted, borderColor: colors.accent },
+  quickChipText: { fontSize: typography.small, color: colors.textMuted },
+  quickChipTextActive: { color: colors.accent, fontWeight: typography.weightSemibold },
+
+  composeCard: {
+    backgroundColor: colors.surface, borderRadius: radii.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg, gap: spacing.sm,
+  },
 
   addItemCard: {
     backgroundColor: colors.surface, borderRadius: radii.lg,
