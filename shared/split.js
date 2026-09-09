@@ -271,12 +271,34 @@ function computeReceipt({ items = [], members = [], printed = {} }) {
     );
   }
 
+  // Cross-check the total the user typed in against the one the model read.
+  // These are two independent readings of the same number, so a disagreement
+  // means the OCR misread something — which is exactly why both are stored.
+  const statedTotalCents =
+    printed.stated_total_cents == null ? null : Math.round(printed.stated_total_cents);
+  const printedTotalCents = Math.round(printed.total_cents || 0);
+  let statedDiscrepancyCents = null;
+  if (statedTotalCents != null && printedTotalCents > 0) {
+    statedDiscrepancyCents = printedTotalCents - statedTotalCents;
+    if (statedDiscrepancyCents !== 0) {
+      const sign = statedDiscrepancyCents > 0 ? '+' : '-';
+      warnings.push(
+        `you entered $${toDollars(statedTotalCents).toFixed(2)} as the total but the scan read ` +
+          `$${toDollars(printedTotalCents).toFixed(2)} ` +
+          `(off by ${sign}$${Math.abs(toDollars(statedDiscrepancyCents)).toFixed(2)}) — ` +
+          `check the scanned lines`
+      );
+    }
+  }
+
   return {
     perItem,
     perPerson,
     totals: {
       printed_subtotal_cents: printedSubtotal,
-      printed_total_cents: Math.round(printed.total_cents || 0),
+      printed_total_cents: printedTotalCents,
+      stated_total_cents: statedTotalCents,
+      stated_discrepancy_cents: statedDiscrepancyCents,
       tax_cents: taxCents,
       tip_cents: tipCents,
       billable_items_cents: billableCents,

@@ -40,7 +40,11 @@ CREATE TABLE members (
 CREATE TABLE receipts (
   id                     BIGSERIAL PRIMARY KEY,
   group_id               BIGINT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  label                  TEXT,
+  title                  TEXT,
+  description            TEXT,
+  -- The date the transaction happened, per the receipt. Distinct from
+  -- created_at below, which is when the photo was uploaded.
+  transaction_date       DATE NOT NULL DEFAULT CURRENT_DATE,
   currency               TEXT NOT NULL DEFAULT 'USD',
   image_count            INT  NOT NULL DEFAULT 0,
   -- exactly what the paper said, kept for OCR reconciliation
@@ -48,9 +52,19 @@ CREATE TABLE receipts (
   printed_tax_cents      BIGINT NOT NULL DEFAULT 0,
   printed_tip_cents      BIGINT NOT NULL DEFAULT 0,
   printed_total_cents    BIGINT NOT NULL DEFAULT 0,
+  -- The total the user read off the paper themselves. Held separately from
+  -- printed_total_cents (what the model claimed) so the two can be compared:
+  -- a disagreement means the OCR misread something.
+  stated_total_cents     BIGINT,
   ocr_json               JSONB,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- Upload timestamp. Recorded for future use; nothing in the UI reads it.
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT receipts_stated_total_nonneg
+    CHECK (stated_total_cents IS NULL OR stated_total_cents >= 0)
 );
+
+CREATE INDEX receipts_group_txn_date_idx
+  ON receipts (group_id, transaction_date DESC, id DESC);
 
 CREATE TABLE receipt_items (
   id                BIGSERIAL PRIMARY KEY,
