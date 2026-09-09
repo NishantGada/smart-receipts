@@ -6,16 +6,24 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "server": "node server/index.js",
+    "test": "node --test shared/split.test.js"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "axios": "^1.13.4",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
-    "expo": "~54.0.33",
-    "expo-image-picker": "~17.0.10",
-    "expo-status-bar": "~3.0.9",
-    "react": "19.1.0",
-    "react-native": "0.81.5"
+    "expo": "^57.0.21",
+    "expo-font": "~57.0.3",
+    "expo-image-picker": "~57.0.16",
+    "expo-splash-screen": "~57.0.8",
+    "expo-status-bar": "~57.0.1",
+    "express": "^5.2.1",
+    "pg": "^8.23.0",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
   },
   "private": true
 }
