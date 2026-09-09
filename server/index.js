@@ -16,7 +16,20 @@ const PORT = Number(process.env.PORT || 8004);
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
+const bad = (res, msg, code = 400, errors = null) =>
+  res.status(code).json(errors && errors.length > 1 ? { error: msg, errors } : { error: msg });
+
+/**
+ * A DATE column comes back from pg as a JS Date at local midnight. Formatting
+ * it with toISOString() would shift it a day west of UTC, so read the local
+ * calendar fields instead.
+ */
+const isoDate = (d) => {
+  if (!d) return null;
+  if (typeof d === 'string') return d.slice(0, 10);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 /** Uniform view of a member's money, in both cents and dollars, for the UI. */
 const money = (cents) => ({ cents, dollars: toDollars(cents) });
@@ -108,6 +121,9 @@ app.post('/groups/:id/receipts', wrap(async (req, res) => {
   const ocr = req.body?.ocr;
   if (!ocr || !Array.isArray(ocr.items)) return bad(res, 'ocr.items is required');
 
+  const meta = parseReceiptMeta(req.body);
+  if (meta.errors) return bad(res, meta.errors[0], 400, meta.errors);
+
   const { rows: members } = await query(
     'SELECT id, name FROM members WHERE group_id = $1 ORDER BY created_at, id',
     [groupId]
@@ -116,14 +132,18 @@ app.post('/groups/:id/receipts', wrap(async (req, res) => {
 
   const receipt = await tx(async (c) => {
     const { rows: r } = await c.query(
-      `INSERT INTO receipts (group_id, label, currency, image_count,
+      `INSERT INTO receipts (group_id, title, description, transaction_date,
+                             stated_total_cents, currency, image_count,
                              printed_subtotal_cents, printed_tax_cents,
                              printed_tip_cents, printed_total_cents, ocr_json)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING id, created_at`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING id, created_at, title, description, transaction_date, stated_total_cents`,
       [
         groupId,
-        req.body?.label || null,
+        meta.value.title,
+        meta.value.description ?? null,
+        meta.value.transaction_date,
+        meta.value.stated_total_cents ?? null,
         ocr.currency || 'USD',
         Number(req.body?.image_count || 0),
         toCents(ocr.subtotal),
@@ -158,7 +178,7 @@ app.post('/groups/:id/receipts', wrap(async (req, res) => {
       );
       items.push(ins[0]);
     }
-    return { id: receiptId, created_at: r[0].created_at, items };
+    return { ...r[0], id: receiptId, items };
   });
 
   const prefilled = [];
@@ -169,6 +189,13 @@ app.post('/groups/:id/receipts', wrap(async (req, res) => {
   res.status(201).json({
     receipt_id: receipt.id,
     created_at: receipt.created_at,
+    title: receipt.title,
+    description: receipt.description,
+    transaction_date: isoDate(receipt.transaction_date),
+    stated_total:
+      receipt.stated_total_cents == null
+        ? null
+        : toDollars(Number(receipt.stated_total_cents)),
     members,
     printed: {
       subtotal: Number(ocr.subtotal || 0),
@@ -178,6 +205,44 @@ app.post('/groups/:id/receipts', wrap(async (req, res) => {
       currency: ocr.currency || 'USD',
     },
     items: prefilled,
+  });
+}));
+
+/**
+ * Edit a receipt's metadata after the fact. Partial: only the keys present in
+ * the body are touched, so renaming a receipt cannot silently clear its
+ * description. Item splits are untouched — those are edited on their own
+ * endpoints.
+ */
+app.patch('/receipts/:id', wrap(async (req, res) => {
+  const { rows: existing } = await query('SELECT id FROM receipts WHERE id = $1', [req.params.id]);
+  if (!existing.length) {
+    return bad(res, 'This receipt is no longer on the server. Scan it again to continue.', 410);
+  }
+
+  const meta = parseReceiptMeta(req.body, { partial: true });
+  if (meta.errors) return bad(res, meta.errors[0], 400, meta.errors);
+
+  const fields = Object.keys(meta.value);
+  if (!fields.length) {
+    return bad(res, 'nothing to update — send title, description, transaction_date or stated_total');
+  }
+
+  const set = fields.map((f, i) => `${f} = $${i + 2}`).join(', ');
+  const { rows } = await query(
+    `UPDATE receipts SET ${set} WHERE id = $1
+     RETURNING id, title, description, transaction_date, stated_total_cents, created_at`,
+    [req.params.id, ...fields.map((f) => meta.value[f])]
+  );
+
+  const r = rows[0];
+  res.json({
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    transaction_date: isoDate(r.transaction_date),
+    stated_total: r.stated_total_cents == null ? null : toDollars(Number(r.stated_total_cents)),
+    updated: fields,
   });
 }));
 
@@ -355,8 +420,9 @@ app.put('/receipts/:id/splits', wrap(async (req, res) => {
 
 app.get('/groups/:id/receipts', wrap(async (req, res) => {
   const { rows } = await query(
-    `SELECT r.id, r.label, r.created_at, r.image_count, r.currency,
-            r.printed_total_cents,
+    `SELECT r.id, r.title, r.description, r.transaction_date, r.created_at,
+            r.image_count, r.currency,
+            r.printed_total_cents, r.stated_total_cents,
             COALESCE(SUM(s.amount_cents), 0)::bigint AS billable_cents,
             COUNT(DISTINCT ri.id)::int AS item_count,
             COUNT(DISTINCT ri.id) FILTER (WHERE ri.status = 'refunded')::int      AS refunded_count,
@@ -366,13 +432,18 @@ app.get('/groups/:id/receipts', wrap(async (req, res) => {
        LEFT JOIN item_splits   s  ON s.receipt_item_id = ri.id
       WHERE r.group_id = $1
       GROUP BY r.id
-      ORDER BY r.created_at DESC`,
+      -- Newest transaction first, not newest upload: scanning an old
+      -- receipt should not push it to the top of the history.
+      ORDER BY r.transaction_date DESC, r.id DESC`,
     [req.params.id]
   );
   res.json(
     rows.map((r) => ({
       ...r,
+      transaction_date: isoDate(r.transaction_date),
       printed_total: toDollars(Number(r.printed_total_cents)),
+      stated_total:
+        r.stated_total_cents == null ? null : toDollars(Number(r.stated_total_cents)),
       billable_total: toDollars(Number(r.billable_cents)),
     }))
   );
@@ -412,7 +483,11 @@ app.get('/receipts/:id', wrap(async (req, res) => {
   res.json({
     id: ctx.id,
     group_id: ctx.group_id,
-    label: ctx.label,
+    title: ctx.title,
+    description: ctx.description,
+    transaction_date: isoDate(ctx.transaction_date),
+    stated_total:
+      ctx.stated_total_cents == null ? null : toDollars(Number(ctx.stated_total_cents)),
     created_at: ctx.created_at,
     currency: ctx.currency,
     printed: {
@@ -505,6 +580,69 @@ async function withSuggestion(groupId, item, members) {
   };
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Validate the user-supplied metadata on a receipt. Shared by create and edit
+ * so the two cannot disagree about what a valid title or date is.
+ *
+ * Returns { errors: [...] } or { value: { ... } }. Only keys actually present
+ * in the body appear in `value`, so a PATCH can update one field at a time
+ * without clobbering the rest.
+ */
+function parseReceiptMeta(body, { partial = false } = {}) {
+  const errors = [];
+  const value = {};
+  const has = (k) => body && Object.prototype.hasOwnProperty.call(body, k);
+
+  if (has('title') || !partial) {
+    const title = String(body?.title ?? '').trim();
+    if (!title) errors.push('title is required');
+    else if (title.length > 200) errors.push('title must be 200 characters or fewer');
+    else value.title = title;
+  }
+
+  if (has('description')) {
+    const d = String(body.description ?? '').trim();
+    value.description = d || null;
+  }
+
+  if (has('transaction_date') || !partial) {
+    const raw = String(body?.transaction_date ?? '').trim();
+    if (!raw) {
+      errors.push('transaction_date is required (YYYY-MM-DD)');
+    } else if (!ISO_DATE.test(raw)) {
+      errors.push('transaction_date must look like YYYY-MM-DD');
+    } else {
+      // Compare as calendar dates in UTC. Parsing "YYYY-MM-DD" gives UTC
+      // midnight, so building today's boundary the same way keeps a receipt
+      // dated today from being rejected because of the local offset.
+      const d = new Date(`${raw}T00:00:00Z`);
+      if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
+        errors.push(`transaction_date ${raw} is not a real date`);
+      } else {
+        const now = new Date();
+        const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+        if (d.getTime() > todayUtc) errors.push('transaction_date cannot be in the future');
+        else value.transaction_date = raw;
+      }
+    }
+  }
+
+  if (has('stated_total')) {
+    const raw = body.stated_total;
+    if (raw === null || raw === '') {
+      value.stated_total_cents = null;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) errors.push('stated_total must be a number of 0 or more');
+      else value.stated_total_cents = toCents(n);
+    }
+  }
+
+  return errors.length ? { errors } : { value };
+}
+
 async function loadReceiptContext(receiptId) {
   const { rows: r } = await query('SELECT * FROM receipts WHERE id = $1', [receiptId]);
   if (!r.length) return null;
@@ -566,6 +704,8 @@ function runSplit(ctx, rawItems) {
       tax_cents: Number(ctx.printed_tax_cents),
       tip_cents: Number(ctx.printed_tip_cents),
       total_cents: Number(ctx.printed_total_cents),
+      stated_total_cents:
+        ctx.stated_total_cents == null ? null : Number(ctx.stated_total_cents),
     },
     items: ctx.items.map((i) => {
       const input = byPosition.get(i.position);
@@ -600,6 +740,11 @@ function shapeSummary(computed, ctx) {
       complimentary: toDollars(t.complimentary_cents),
       billable_total: toDollars(t.billable_total_cents),
       ocr_discrepancy: toDollars(t.ocr_discrepancy_cents),
+      // The total the user typed in, and how far the scan is from it. Null
+      // when they did not enter one.
+      stated_total: t.stated_total_cents == null ? null : toDollars(t.stated_total_cents),
+      stated_discrepancy:
+        t.stated_discrepancy_cents == null ? null : toDollars(t.stated_discrepancy_cents),
     },
     per_person: computed.perPerson.map((p) => ({
       member_id: p.member_id,
